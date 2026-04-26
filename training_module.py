@@ -174,25 +174,25 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
     }
 
 
-def _render_model_params(model_type):
+def _render_model_params(container, model_type):
     params = {}
 
-    st.sidebar.markdown('### 🧩 模型參數設定')
+    container.markdown('### 🧩 模型參數設定')
 
-    params['high_de_threshold'] = st.sidebar.number_input('高誤差閾值 (CMC_DE)', min_value=0.0, max_value=10.0, value=0.8, step=0.1)
-    params['high_de_weight'] = st.sidebar.number_input('高誤差樣本權重', min_value=1.0, max_value=20.0, value=5.0, step=0.5)
+    params['high_de_threshold'] = container.number_input('高誤差閾值 (CMC_DE)', min_value=0.0, max_value=10.0, value=0.8, step=0.1)
+    params['high_de_weight'] = container.number_input('高誤差樣本權重', min_value=1.0, max_value=20.0, value=5.0, step=0.5)
 
     if model_type == 'current_ensemble':
-        st.sidebar.caption('目前模型：Voting Ensemble')
-        params['hgb_max_iter'] = st.sidebar.slider('HGB max_iter', min_value=200, max_value=2000, value=1000, step=100)
-        params['hgb_learning_rate'] = st.sidebar.number_input('HGB learning_rate', min_value=0.001, max_value=0.3, value=0.03, step=0.005, format='%.3f')
-        params['et_n_estimators'] = st.sidebar.slider('ExtraTrees n_estimators', min_value=100, max_value=1000, value=400, step=50)
-        params['rf_n_estimators'] = st.sidebar.slider('RandomForest n_estimators', min_value=100, max_value=1000, value=400, step=50)
+        container.caption('目前模型：Voting Ensemble')
+        params['hgb_max_iter'] = container.slider('HGB max_iter', min_value=200, max_value=2000, value=1000, step=100)
+        params['hgb_learning_rate'] = container.number_input('HGB learning_rate', min_value=0.001, max_value=0.3, value=0.03, step=0.005, format='%.3f')
+        params['et_n_estimators'] = container.slider('ExtraTrees n_estimators', min_value=100, max_value=1000, value=400, step=50)
+        params['rf_n_estimators'] = container.slider('RandomForest n_estimators', min_value=100, max_value=1000, value=400, step=50)
     elif model_type == 'automl_lite':
-        st.sidebar.caption('AutoML-lite：對多個模型做隨機搜尋')
-        params['n_iter'] = st.sidebar.slider('搜尋次數 (n_iter)', min_value=5, max_value=60, value=20, step=5)
-        params['cv_folds'] = st.sidebar.selectbox('交叉驗證折數', [3, 4, 5], index=0)
-        params['scoring'] = st.sidebar.selectbox('評分指標', ['neg_mean_absolute_error', 'neg_root_mean_squared_error'], index=0)
+        container.caption('AutoML-lite：對多個模型做隨機搜尋')
+        params['n_iter'] = container.slider('搜尋次數 (n_iter)', min_value=5, max_value=60, value=20, step=5)
+        params['cv_folds'] = container.selectbox('交叉驗證折數', [3, 4, 5], index=0)
+        params['scoring'] = container.selectbox('評分指標', ['neg_mean_absolute_error', 'neg_root_mean_squared_error'], index=0)
 
     return params
 
@@ -203,8 +203,9 @@ def render_training_button(df_raw, dye_cols):
 
     model_type = st.sidebar.selectbox('模型類型', options=list(MODEL_LABELS.keys()), format_func=lambda k: MODEL_LABELS[k])
 
-    with st.sidebar.form('training_form'):
-        model_params = _render_model_params(model_type)
+    form = st.sidebar.form('training_form')
+    with form:
+        model_params = _render_model_params(form, model_type)
         train_clicked = st.form_submit_button('🚀 啟動模型訓練')
 
     if train_clicked:
