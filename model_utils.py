@@ -60,3 +60,93 @@ def transform_bag_of_dyes(df_clean, dye_cols, known_dyes=None):
 
     base_cols = ['標準樣L', '標準樣a', '標準樣b', '色系名稱', '色系編號', 'DPF', 'OP否', 'Total_Conc', 'Log_Total_Conc']
     return df_out[base_cols + dye_f_cols], known_dyes
+
+
+def build_data_reference(df_raw, dye_cols, known_dyes):
+    df_ref = df_raw.copy()
+    for dc in dye_cols:
+        df_ref[dc] = df_ref[dc].apply(clean_dye_id)
+
+    X_ref, _ = transform_bag_of_dyes(df_ref, dye_cols, known_dyes=known_dyes)
+
+    num_cols = ['標準樣L', '標準樣a', '標準樣b', 'DPF', 'Total_Conc', 'Log_Total_Conc']
+    numeric_stats = {}
+    for col in num_cols:
+        series = pd.to_numeric(X_ref[col], errors='coerce').dropna()
+        numeric_stats[col] = {
+            'min': float(series.min()),
+            'max': float(series.max()),
+            'mean': float(series.mean()),
+            'std': float(series.std(ddof=0) if series.std(ddof=0) > 1e-8 else 1.0),
+        }
+
+    combo_set = set()
+    for _, row in df_ref[dye_cols].iterrows():
+        combo = sorted([clean_dye_id(row[c]) for c in dye_cols if clean_dye_id(row[c]) != '無'])
+        combo_set.add('+'.join(combo) if combo else '僅基礎藥劑(無染料)')
+
+    return {
+        'numeric_stats': numeric_stats,
+        'seen_OP否': sorted(df_ref['OP否'].astype(str).unique().tolist()),
+        'seen_色系名稱': sorted(df_ref['色系名稱'].astype(str).unique().tolist()),
+        'seen_色系編號': sorted(df_ref['色系編號'].astype(str).unique().tolist()),
+        'seen_combos': sorted(combo_set),
+    }
+
+
+def assess_input_data_confidence(df_input, dye_cols, known_dyes, data_reference):
+    X_input, _ = transform_bag_of_dyes(df_input.copy(), dye_cols, known_dyes=known_dyes)
+    row_raw = df_input.iloc[0]
+    row_feat = X_input.iloc[0]
+
+    op_seen = str(row_raw['OP否']) in set(data_reference.get('seen_OP否', []))
+    name_seen = str(row_raw['色系名稱']) in set(data_reference.get('seen_色系名稱', []))
+    id_seen = str(row_raw['色系編號']) in set(data_reference.get('seen_色系編號', []))
+    cat_score = np.mean([op_seen, name_seen, id_seen])
+
+    num_scores = []
+    num_details = []
+    for col, stats in data_reference.get('numeric_stats', {}).items():
+        val = float(row_feat[col])
+        v_min, v_max, v_mean, v_std = stats['min'], stats['max'], stats['mean'], stats['std']
+        if v_min <= val <= v_max:
+            score = 1.0
+        else:
+            distance = min(abs(val - v_min), abs(val - v_max))
+            score = float(np.exp(-distance / max(v_std, 1e-8)))
+        num_scores.append(score)
+        num_details.append({'欄位': col, '輸入值': val, '訓練範圍': f"[{v_min:.3f}, {v_max:.3f}]", '子分數': score})
+    num_score = float(np.mean(num_scores)) if num_scores else 0.0
+
+    input_combo = sorted([clean_dye_id(row_raw[c]) for c in dye_cols if clean_dye_id(row_raw[c]) != '無'])
+    input_combo_key = '+'.join(input_combo) if input_combo else '僅基礎藥劑(無染料)'
+    combo_seen = input_combo_key in set(data_reference.get('seen_combos', []))
+    combo_score = 1.0 if combo_seen else 0.35
+
+    total_score = 100 * (0.4 * cat_score + 0.35 * num_score + 0.25 * combo_score)
+    if total_score >= 80:
+        level = '高'
+    elif total_score >= 60:
+        level = '中'
+    else:
+        level = '低'
+
+    return {
+        'score': float(total_score),
+        'level': level,
+        'category': {
+            'score': float(cat_score),
+            'OP否是否出現在訓練資料': op_seen,
+            '色系名稱是否出現在訓練資料': name_seen,
+            '色系編號是否出現在訓練資料': id_seen,
+        },
+        'numeric': {
+            'score': num_score,
+            'details': num_details,
+        },
+        'combo': {
+            'score': combo_score,
+            'input_combo': input_combo_key,
+            'seen_in_training': combo_seen,
+        },
+    }
