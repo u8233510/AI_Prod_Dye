@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+from pathlib import Path
+import joblib
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
     ExtraTreesRegressor,
@@ -25,6 +27,8 @@ MODEL_LABELS = {
     'current_ensemble': '目前模型 (Voting Ensemble)',
     'automl_lite': 'AutoML-lite (RandomizedSearchCV)',
 }
+
+MODEL_ARTIFACT_PATH = Path('saved_model_artifact.joblib')
 
 
 def _build_preprocessor(known_dyes):
@@ -174,6 +178,30 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
     }
 
 
+def save_trained_artifact(state, save_path=MODEL_ARTIFACT_PATH):
+    artifact = {
+        'model': state['model'],
+        'kd': state['kd'],
+        'dc': state['dc'],
+        'model_type': state.get('model_type'),
+        'model_label': state.get('model_label'),
+        'model_params': state.get('model_params', {}),
+        'automl_info': state.get('automl_info'),
+        'trained_df_meta': {
+            '色系名稱': sorted(state['df_raw']['色系名稱'].astype(str).unique()),
+            '色系編號': sorted(state['df_raw']['色系編號'].astype(str).unique()),
+        },
+    }
+    joblib.dump(artifact, save_path)
+    return save_path
+
+
+def load_trained_artifact(save_path=MODEL_ARTIFACT_PATH):
+    if not Path(save_path).exists():
+        return None
+    return joblib.load(save_path)
+
+
 def _render_model_params(container, model_type):
     params = {}
 
@@ -197,21 +225,44 @@ def _render_model_params(container, model_type):
     return params
 
 
-def render_training_button(df_raw, dye_cols):
+def render_training_button(df_raw=None, dye_cols=None):
     st.sidebar.markdown('---')
     st.sidebar.markdown('## 🤖 訓練模型選擇')
 
-    model_type = st.sidebar.selectbox('模型類型', options=list(MODEL_LABELS.keys()), format_func=lambda k: MODEL_LABELS[k])
+    if df_raw is not None and dye_cols is not None:
+        form = st.sidebar.form('training_form')
+        with form:
+            model_type = st.selectbox('模型類型', options=list(MODEL_LABELS.keys()), format_func=lambda k: MODEL_LABELS[k])
+            model_params = _render_model_params(form, model_type)
+            train_clicked = st.form_submit_button('🚀 啟動模型訓練')
 
-    form = st.sidebar.form('training_form')
-    with form:
-        model_params = _render_model_params(form, model_type)
-        train_clicked = st.form_submit_button('🚀 啟動模型訓練')
+        if train_clicked:
+            with st.spinner('AI 運算中 (模型訓練中)...'):
+                state = train_model(df_raw, dye_cols, model_type=model_type, model_params=model_params)
+                st.session_state.update(state)
+                st.session_state['trained_df_meta'] = {
+                    '色系名稱': sorted(df_raw['色系名稱'].astype(str).unique()),
+                    '色系編號': sorted(df_raw['色系編號'].astype(str).unique()),
+                }
+                save_path = save_trained_artifact(state)
+                st.sidebar.success(f"訓練完成：{state['model_label']}")
+                st.sidebar.caption(f"已儲存模型：{save_path}")
+                if state.get('automl_info'):
+                    st.sidebar.info(f"最佳CV分數: {state['automl_info']['best_cv_score']:.4f}")
+    else:
+        st.sidebar.caption('若只需預測，可直接載入先前已儲存模型。')
 
-    if train_clicked:
-        with st.spinner('AI 運算中 (模型訓練中)...'):
-            state = train_model(df_raw, dye_cols, model_type=model_type, model_params=model_params)
-            st.session_state.update(state)
-            st.sidebar.success(f"訓練完成：{state['model_label']}")
-            if state.get('automl_info'):
-                st.sidebar.info(f"最佳CV分數: {state['automl_info']['best_cv_score']:.4f}")
+    if st.sidebar.button('📥 載入已儲存模型'):
+        artifact = load_trained_artifact()
+        if artifact is None:
+            st.sidebar.warning('尚未找到已儲存模型，請先完成一次訓練。')
+        else:
+            st.session_state['model'] = artifact['model']
+            st.session_state['kd'] = artifact['kd']
+            st.session_state['dc'] = artifact['dc']
+            st.session_state['model_type'] = artifact.get('model_type')
+            st.session_state['model_label'] = artifact.get('model_label')
+            st.session_state['model_params'] = artifact.get('model_params', {})
+            st.session_state['automl_info'] = artifact.get('automl_info')
+            st.session_state['trained_df_meta'] = artifact.get('trained_df_meta', {})
+            st.sidebar.success(f"已載入模型：{artifact.get('model_label', '已儲存模型')}")
