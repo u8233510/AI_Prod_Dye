@@ -202,9 +202,12 @@ def render_training_button(df_raw, dye_cols):
     st.sidebar.markdown('## 🤖 訓練模型選擇')
 
     model_type = st.sidebar.selectbox('模型類型', options=list(MODEL_LABELS.keys()), format_func=lambda k: MODEL_LABELS[k])
-    model_params = _render_model_params(model_type)
 
-    if st.sidebar.button('🚀 啟動模型訓練'):
+    with st.sidebar.form('training_form'):
+        model_params = _render_model_params(model_type)
+        train_clicked = st.form_submit_button('🚀 啟動模型訓練')
+
+    if train_clicked:
         with st.spinner('AI 運算中 (模型訓練中)...'):
             state = train_model(df_raw, dye_cols, model_type=model_type, model_params=model_params)
             st.session_state.update(state)
