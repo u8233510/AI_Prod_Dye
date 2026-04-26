@@ -9,10 +9,16 @@ from model_utils import clean_dye_id, detect_dye_columns
 def _prepare_distribution_tables(df_raw, dye_cols):
     df_ana = df_raw.copy()
     dye_cols = list(dye_cols)
+    df_ana = df_ana.reset_index(drop=True)
+    df_ana['_row_id'] = df_ana.index
 
-    melted = df_ana[['色系名稱'] + dye_cols].melt(id_vars='色系名稱', value_vars=dye_cols, value_name='染料料號')
+    melted = df_ana[['_row_id', '色系名稱'] + dye_cols].melt(
+        id_vars=['_row_id', '色系名稱'],
+        value_vars=dye_cols,
+        value_name='染料料號',
+    )
     melted['染料料號'] = melted['染料料號'].apply(clean_dye_id)
-    melted = melted[melted['染料料號'] != '無'].drop_duplicates(subset=['色系名稱', '染料料號'])
+    melted = melted[melted['染料料號'] != '無'].drop_duplicates(subset=['_row_id', '色系名稱', '染料料號'])
     dist_df = pd.crosstab(melted['染料料號'], melted['色系名稱']).sort_index()
 
     dye_id_cols = detect_dye_columns(df_ana)
