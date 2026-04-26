@@ -15,7 +15,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from model_utils import build_data_reference, clean_dye_id, deltaE_CMC, transform_bag_of_dyes
+from model_utils import build_data_reference, clean_dye_id, deltaE_CMC, detect_dye_columns, transform_bag_of_dyes
 
 
 class ExplicitWeightedVotingRegressor(VotingRegressor):
@@ -262,7 +262,11 @@ def render_training_button(df_raw=None, dye_cols=None):
             st.session_state['model'] = artifact['model']
             st.session_state['kd'] = artifact['kd']
             st.session_state['dc'] = artifact['dc']
-            st.session_state['data_reference'] = artifact.get('data_reference', {})
+            data_reference = artifact.get('data_reference', {})
+            if not data_reference and 'df_raw' in st.session_state:
+                fallback_dye_cols = artifact.get('dc') or detect_dye_columns(st.session_state['df_raw'])
+                data_reference = build_data_reference(st.session_state['df_raw'], fallback_dye_cols, artifact['kd'])
+            st.session_state['data_reference'] = data_reference
             st.session_state['model_type'] = artifact.get('model_type')
             st.session_state['model_label'] = artifact.get('model_label')
             st.session_state['model_params'] = artifact.get('model_params', {})

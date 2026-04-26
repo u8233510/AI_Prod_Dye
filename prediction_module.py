@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from model_utils import assess_input_data_confidence, deltaE_CMC, transform_bag_of_dyes
+from model_utils import assess_input_data_confidence, build_data_reference, deltaE_CMC, transform_bag_of_dyes
 
 
 def render_prediction(tab_val):
@@ -61,6 +61,13 @@ def render_prediction(tab_val):
             )
 
             confidence_result = None
+            if not st.session_state.get('data_reference') and 'df_raw' in st.session_state:
+                st.session_state['data_reference'] = build_data_reference(
+                    st.session_state['df_raw'],
+                    st.session_state['dc'],
+                    st.session_state['kd'],
+                )
+
             if st.session_state.get('data_reference'):
                 confidence_result = assess_input_data_confidence(
                     df_m,
@@ -79,8 +86,8 @@ def render_prediction(tab_val):
 
             with col_res:
                 st.write("### 📊 預測結果")
+                st.write("### 🧪 資料信心分析 (預測前)")
                 if confidence_result is not None:
-                    st.write("### 🧪 資料信心分析 (預測前)")
                     st.metric('資料信心指數', f"{confidence_result['score']:.1f}/100", confidence_result['level'])
                     c_conf1, c_conf2, c_conf3 = st.columns(3)
                     c_conf1.metric('類別匹配', f"{confidence_result['category']['score'] * 100:.1f}%")
@@ -97,6 +104,9 @@ def render_prediction(tab_val):
                         st.dataframe(pd.DataFrame(confidence_result['numeric']['details']))
                         st.write('**染劑組合比對**')
                         st.json(confidence_result['combo'])
+                else:
+                    st.metric('資料信心指數', 'N/A')
+                    st.warning('⚠️ 目前缺少訓練資料參考分布，無法計算信心指數。請先上傳訓練資料並重新訓練/載入模型。')
 
                 st.metric("預測 L*", f"{p_L:.2f}")
                 st.metric("預測 a*", f"{p_a:.2f}")

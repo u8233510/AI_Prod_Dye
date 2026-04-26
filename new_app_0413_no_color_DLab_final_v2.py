@@ -15,6 +15,7 @@ tab_ana, tab_feedback, tab_val = st.tabs(["📊 數據分布分析", "📈 訓�
 
 if uploaded_file:
     df_raw = load_uploaded_data(uploaded_file)
+    st.session_state['df_raw'] = df_raw
     dye_cols = detect_dye_columns(df_raw)
 
     render_data_distribution(tab_ana, df_raw, dye_cols)
