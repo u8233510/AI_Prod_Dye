@@ -17,8 +17,17 @@ def render_prediction(tab_val):
             with st.form("prediction_form"):
                 st.write("#### 1. 物理參數 (標樣數值作為核心輸入)")
                 c1, c2, c3, c4 = st.columns(4)
-                v_name = c1.selectbox("色系名稱 (記錄用)", sorted(st.session_state['df_raw']['色系名稱'].astype(str).unique()))
-                v_id = c2.selectbox("色系編號 (記錄用)", sorted(st.session_state['df_raw']['色系編號'].astype(str).unique()))
+                shade_name_options = sorted(st.session_state.get('trained_df_meta', {}).get('色系名稱', []))
+                shade_id_options = sorted(st.session_state.get('trained_df_meta', {}).get('色系編號', []))
+                if not shade_name_options and 'df_raw' in st.session_state:
+                    shade_name_options = sorted(st.session_state['df_raw']['色系名稱'].astype(str).unique())
+                if not shade_id_options and 'df_raw' in st.session_state:
+                    shade_id_options = sorted(st.session_state['df_raw']['色系編號'].astype(str).unique())
+                shade_name_options = shade_name_options or ['未知']
+                shade_id_options = shade_id_options or ['未知']
+
+                v_name = c1.selectbox("色系名稱 (記錄用)", shade_name_options)
+                v_id = c2.selectbox("色系編號 (記錄用)", shade_id_options)
                 v_dpf = c3.number_input("DPF", value=1.0)
                 v_op = c4.selectbox("OP否", ['Y', 'N'])
 

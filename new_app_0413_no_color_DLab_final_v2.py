@@ -19,6 +19,8 @@ if uploaded_file:
 
     render_data_distribution(tab_ana, df_raw, dye_cols)
     render_training_button(df_raw, dye_cols)
+else:
+    render_training_button()
 
 if 'fb' in st.session_state:
     render_training_feedback(tab_feedback, st.session_state['fb'])
