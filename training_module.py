@@ -15,7 +15,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from model_utils import clean_dye_id, deltaE_CMC, transform_bag_of_dyes
+from model_utils import build_data_reference, clean_dye_id, deltaE_CMC, transform_bag_of_dyes
 
 
 class ExplicitWeightedVotingRegressor(VotingRegressor):
@@ -170,6 +170,7 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
         'kd': known_dyes,
         'fb': df_fb,
         'dc': dye_cols,
+        'data_reference': build_data_reference(df_train, dye_cols, known_dyes),
         'df_raw': df_raw,
         'model_type': model_type,
         'model_label': MODEL_LABELS.get(model_type, model_type),
@@ -183,6 +184,7 @@ def save_trained_artifact(state, save_path=MODEL_ARTIFACT_PATH):
         'model': state['model'],
         'kd': state['kd'],
         'dc': state['dc'],
+        'data_reference': state.get('data_reference', {}),
         'model_type': state.get('model_type'),
         'model_label': state.get('model_label'),
         'model_params': state.get('model_params', {}),
@@ -260,6 +262,7 @@ def render_training_button(df_raw=None, dye_cols=None):
             st.session_state['model'] = artifact['model']
             st.session_state['kd'] = artifact['kd']
             st.session_state['dc'] = artifact['dc']
+            st.session_state['data_reference'] = artifact.get('data_reference', {})
             st.session_state['model_type'] = artifact.get('model_type')
             st.session_state['model_label'] = artifact.get('model_label')
             st.session_state['model_params'] = artifact.get('model_params', {})
