@@ -90,16 +90,16 @@ def render_prediction(tab_val):
                 if confidence_result is not None:
                     st.metric('訓練資料覆蓋指數', f"{confidence_result['score']:.1f}/100", confidence_result['level'])
                     st.metric('預估預測正確率(參考)', f"{confidence_result['estimated_correctness']:.1f}%")
-                    c_conf1, c_conf2, c_conf3, c_conf4 = st.columns(4)
-                    c_conf1.metric('類別組合支持度', f"{confidence_result['category']['score'] * 100:.1f}%")
-                    c_conf2.metric('數值範圍支持度', f"{confidence_result['numeric']['score'] * 100:.1f}%")
-                    c_conf3.metric('染劑組合支持度', f"{confidence_result['combo']['score'] * 100:.1f}%")
-                    c_conf4.metric('Lab鄰域支持度', f"{confidence_result['lab_region']['score'] * 100:.1f}%")
+                    st.write("#### 支持度明細")
+                    st.write(f"類別組合支持度：{confidence_result['category']['score'] * 100:.1f}%")
+                    st.write(f"數值範圍支持度：{confidence_result['numeric']['score'] * 100:.1f}%")
+                    st.write(f"染劑組合支持度：{confidence_result['combo']['score'] * 100:.1f}%")
+                    st.write(f"Lab 鄰域支持度：{confidence_result['lab_region']['score'] * 100:.1f}%")
 
-                    c_cnt1, c_cnt2, c_cnt3 = st.columns(3)
-                    c_cnt1.metric('此染劑組合在訓練資料出現次數', confidence_result['combo']['出現次數'])
-                    c_cnt2.metric('此類別三欄位組合出現次數', confidence_result['category']['三欄位組合出現次數'])
-                    c_cnt3.metric('Lab ±3 鄰域樣本數', confidence_result['lab_region']['count_within_3_0'])
+                    st.write("#### 訓練資料比對數量")
+                    st.write(f"此染劑組合在訓練資料出現次數：{confidence_result['combo']['出現次數']}")
+                    st.write(f"此類別三欄位組合出現次數：{confidence_result['category']['三欄位組合出現次數']}")
+                    st.write(f"Lab ±3 鄰域樣本數：{confidence_result['lab_region']['count_within_3_0']}")
 
                     if confidence_result['score'] < 60:
                         st.warning('⚠️ 輸入資料在訓練資料中支持度偏低，預測風險高，建議先補資料或人工覆核。')
