@@ -82,7 +82,13 @@ def render_prediction(tab_val):
             p_L = std_L_val + p_DL
             p_a = std_a_val + p_Da
             p_b = std_b_val + p_Db
-            de_val = deltaE_CMC((std_L_val, std_a_val, std_b_val), (p_L, p_a, p_b))
+            de_from_vector = deltaE_CMC((std_L_val, std_a_val, std_b_val), (p_L, p_a, p_b))
+            de_direct = None
+            de_val = de_from_vector
+            if st.session_state.get('de_model') is not None:
+                de_direct = float(st.session_state['de_model'].predict(X_m)[0])
+                blend_w = float(st.session_state.get('model_params', {}).get('de_blend_weight', 0.7))
+                de_val = blend_w * de_direct + (1.0 - blend_w) * de_from_vector
 
             with col_res:
                 st.write("### 📊 預測結果")
@@ -120,6 +126,9 @@ def render_prediction(tab_val):
                 st.metric("預測 L*", f"{p_L:.2f}")
                 st.metric("預測 a*", f"{p_a:.2f}")
                 st.metric("預測 b*", f"{p_b:.2f}")
+                st.write(f"DE(向量推導): `{de_from_vector:.3f}`")
+                if de_direct is not None:
+                    st.write(f"DE(直接模型): `{de_direct:.3f}`")
                 st.write(f"預測 CMC DE: `{de_val:.3f}`")
                 if de_val <= 0.8:
                     st.success("✅ 合格 (DE <= 0.8)")
