@@ -7,8 +7,15 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, VotingRegressor, HistGradientBoostingRegressor
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import train_test_split 
+
+# ==========================================
+# 0-1. 參數設定
+# ==========================================
+PROCESS_PARAM_COLS = ['染缸容量KG', '主泵轉數', '帶布輪轉速', '噴嘴大小', '循環時間', '總圈數', '浴比']
+ADD_ON_FLAG_COL = '是否有追加'
 
 # ==========================================
 # 0. 核心包裝：確保權重支援
@@ -65,8 +72,8 @@ def transform_bag_of_dyes(df_clean, dye_cols, known_dyes=None):
     df_out['Total_Conc'] = df_out[dye_f_cols].sum(axis=1)
     df_out['Log_Total_Conc'] = np.log1p(df_out['Total_Conc'])
     # 物理參考特徵：標樣 LAB + DPF + OP
-    base_cols = ['標準樣L', '標準樣a', '標準樣b', '色系名稱', '色系編號', 'DPF', 'OP否', 'Total_Conc', 'Log_Total_Conc']
-    return df_out[base_cols + dye_f_cols], known_dyes
+    base_cols = ['標準樣L', '標準樣a', '標準樣b', '色系名稱', '色系編號', 'DPF', 'OP否', 'Total_Conc', 'Log_Total_Conc'] + PROCESS_PARAM_COLS
+    return df_out.reindex(columns=base_cols + dye_f_cols, fill_value=0), known_dyes
 
 # ==========================================
 # 3. Streamlit 介面佈局
@@ -79,6 +86,13 @@ tab_ana, tab_feedback, tab_val = st.tabs(["📊 數據分布分析", "📈 訓�
 
 if uploaded_file:
     df_raw = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+    missing_param_cols = [c for c in PROCESS_PARAM_COLS + [ADD_ON_FLAG_COL] if c not in df_raw.columns]
+    if missing_param_cols:
+        st.error(f"資料缺少必要欄位：{', '.join(missing_param_cols)}")
+        st.stop()
+    for col in PROCESS_PARAM_COLS:
+        df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce')
+    df_raw[ADD_ON_FLAG_COL] = df_raw[ADD_ON_FLAG_COL].astype(str).str.strip().str.upper()
     dye_cols = detect_dye_columns(df_raw)
 
     # --- 修正 1: 數據分布分析 (新增染料與色系名稱統計) ---
@@ -149,10 +163,11 @@ if uploaded_file:
         with st.spinner("AI 運算中 (平衡物理特徵學習模式)..."):
             df_train = df_raw.copy()
             # 剔除空值
-            df_train = df_train.dropna(subset=['標準樣L', '標準樣a', '標準樣b', 'L', 'a', 'b', 'DPF', 'OP否', 'CMC_DE'])
+            df_train = df_train.dropna(subset=['標準樣L', '標準樣a', '標準樣b', 'L', 'a', 'b', 'DPF', 'OP否', 'CMC_DE'] + PROCESS_PARAM_COLS)
             
             # 【新增修改】過濾掉 DE 過大的異常雜訊 (例如 DE > 1.5 視為非配方問題)
             df_train = df_train[df_train['CMC_DE'] <= 1.5].reset_index(drop=True)
+            df_train['追加異常標記'] = np.where(df_train[ADD_ON_FLAG_COL] == 'Y', 1, 0)
             
             
             df_c = df_train.copy()
@@ -199,7 +214,7 @@ if uploaded_file:
                 ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['OP否', '色系名稱']), 
     
                 # 【修改點】加入 '色系編號' 到數值縮放
-                ('num', StandardScaler(), ['標準樣L', '標準樣a', '標準樣b', 'DPF', '色系編號', 'Total_Conc', 'Log_Total_Conc'] + [f'Dye_{d}' for d in known_dyes])
+                ('num', StandardScaler(), ['標準樣L', '標準樣a', '標準樣b', 'DPF', '色系編號', 'Total_Conc', 'Log_Total_Conc'] + PROCESS_PARAM_COLS + [f'Dye_{d}' for d in known_dyes])
             ])
             
             #model = Pipeline([
@@ -228,10 +243,18 @@ if uploaded_file:
             
             model.fit(X_train, Y_train, reg__sample_weight=sample_weights) 
             preds = model.predict(X_test) 
+
+            # 額外訓練：是否有追加 (Y=異常, N=正常)
+            clf = Pipeline([
+                ('pre', pre),
+                ('clf', RandomForestClassifier(n_estimators=400, random_state=42, class_weight='balanced'))
+            ])
+            clf.fit(X_train, df_train.loc[X_train.index, '追加異常標記'])
+            add_on_prob = clf.predict_proba(X_test)[:, 1]
             
             df_val_raw = df_train.loc[X_test.index].copy()
-            df_fb = df_val_raw[['成品布號', 'L', 'a', 'b', 'CIE_DL', 'CIE_Da', 'CIE_Db', 'CMC_DE', '標準樣L', '標準樣a', '標準樣b']].copy().reset_index(drop=True)
-            df_fb.columns = ['布號', '實際L', '實際a', '實際b', '實際DL', '實際Da', '實際Db', '實際DE', 'stdL', 'stda', 'stdb']
+            df_fb = df_val_raw[['成品布號', 'L', 'a', 'b', 'CIE_DL', 'CIE_Da', 'CIE_Db', 'CMC_DE', '標準樣L', '標準樣a', '標準樣b', ADD_ON_FLAG_COL]].copy().reset_index(drop=True)
+            df_fb.columns = ['布號', '實際L', '實際a', '實際b', '實際DL', '實際Da', '實際Db', '實際DE', 'stdL', 'stda', 'stdb', '是否有追加']
             #df_fb['預測L'], df_fb['預測a'], df_fb['預測b'] = preds[:,0], preds[:,1], preds[:,2]
             # 先接收預測的 Delta 值
             #df_fb['預測DL'], df_fb['預測Da'], df_fb['預測Db'] = preds[:,0], preds[:,1], preds[:,2]
@@ -272,8 +295,10 @@ if uploaded_file:
             #df_fb['預測Db'] = df_fb['預測b'] - df_fb['stdb']
             #df_fb['預測DE'] = [deltaE_CMC((df_fb.loc[i, 'stdL'], df_fb.loc[i, 'stda'], df_fb.loc[i, 'stdb']), (preds[i,0], preds[i,1], preds[i,2])) for i in range(len(df_fb))]
             df_fb['預測DE'] = [deltaE_CMC((df_fb.loc[i, 'stdL'], df_fb.loc[i, 'stda'], df_fb.loc[i, 'stdb']), (df_fb.loc[i, '預測L'], df_fb.loc[i, '預測a'], df_fb.loc[i, '預測b'])) for i in range(len(df_fb))]
+            df_fb['預測追加機率'] = add_on_prob
+            df_fb['預測是否有追加'] = np.where(df_fb['預測追加機率'] >= 0.5, 'Y', 'N')
             
-            st.session_state.update({'model': model, 'kd': known_dyes, 'fb': df_fb, 'dc': dye_cols, 'df_raw': df_raw})
+            st.session_state.update({'model': model, 'risk_model': clf, 'kd': known_dyes, 'fb': df_fb, 'dc': dye_cols, 'df_raw': df_raw})
             st.sidebar.success(f"訓練完成！")
 
 # --- 修正 2: 訓練回測回饋 (詳細顯示 7 項指標比對) ---
@@ -316,6 +341,11 @@ if 'fb' in st.session_state:
             display_df[f'Δ{label}差異'] = df_fb[pre] - df_fb[act]
             
         st.dataframe(display_df.round(3).style.background_gradient(subset=[f'Δ{m}差異' for m in ['L','a','b','DL','Da','Db','DE']], cmap='RdBu_r'), use_container_width=True)
+        st.markdown("### 🧪 追加異常判定 (Y=需重新出缸調方, N=正常)")
+        st.dataframe(
+            df_fb[['布號', '是否有追加', '預測是否有追加', '預測追加機率']].style.background_gradient(subset=['預測追加機率'], cmap='OrRd'),
+            use_container_width=True
+        )
 
         # 保留原有的圖表供深度參考
         st.markdown("---")
@@ -341,6 +371,17 @@ with tab_val:
                 v_id = c2.selectbox("色系編號 (記錄用)", sorted(st.session_state['df_raw']['色系編號'].astype(str).unique()))
                 v_dpf = c3.number_input("DPF", value=1.0)
                 v_op = c4.selectbox("OP否", ['Y', 'N'])
+
+                st.write("#### 2. 製程參數 (預測時輸入 7 項)")
+                p1, p2, p3, p4 = st.columns(4)
+                v_tank_kg = p1.number_input("染缸容量KG", value=500.0)
+                v_main_pump = p2.number_input("主泵轉數", value=500.0)
+                v_cloth_wheel = p3.number_input("帶布輪轉速", value=80.0)
+                v_nozzle = p4.number_input("噴嘴大小", value=40.0)
+                p5, p6, p7 = st.columns(3)
+                v_cycle_time = p5.number_input("循環時間", value=120.0)
+                v_total_round = p6.number_input("總圈數", value=30.0)
+                v_bath_ratio = p7.number_input("浴比", value=10.0)
                 
                 csL, csa, csb = st.columns(3)
                 std_L_val = csL.number_input("標準樣 L*", value=50.0)
@@ -359,7 +400,23 @@ with tab_val:
         # 只有在按下表單內的送出按鈕後，才會執行這裡的預測邏輯
         if predict_btn:
             #df_m = pd.DataFrame([{'標準樣L': std_L_val, '標準樣a': std_a_val, '標準樣b': std_b_val, 'DPF': v_dpf, 'OP否': v_op, **manual_input}])
-            df_m = pd.DataFrame([{'標準樣L': std_L_val,'標準樣a': std_a_val,'標準樣b': std_b_val,'DPF': v_dpf,'OP否': v_op,'色系名稱': v_name, '色系編號': v_id, **manual_input}])
+            df_m = pd.DataFrame([{
+                '標準樣L': std_L_val,
+                '標準樣a': std_a_val,
+                '標準樣b': std_b_val,
+                'DPF': v_dpf,
+                'OP否': v_op,
+                '色系名稱': v_name,
+                '色系編號': v_id,
+                '染缸容量KG': v_tank_kg,
+                '主泵轉數': v_main_pump,
+                '帶布輪轉速': v_cloth_wheel,
+                '噴嘴大小': v_nozzle,
+                '循環時間': v_cycle_time,
+                '總圈數': v_total_round,
+                '浴比': v_bath_ratio,
+                **manual_input
+            }])
         
             
             X_m, _ = transform_bag_of_dyes(df_m, st.session_state['dc'], known_dyes=st.session_state['kd'])
@@ -374,6 +431,7 @@ with tab_val:
             #p_b = std_b_val + p_Db
             
             m_pred = st.session_state['model'].predict(X_m)[0]
+            add_on_risk = st.session_state['risk_model'].predict_proba(X_m)[0, 1]
             
             # 1. 接收預測的 Delta (DL, DC, Dh)
             p_DL, p_DC, p_Dh = m_pred[0], m_pred[1], m_pred[2]
@@ -406,5 +464,10 @@ with tab_val:
                     st.success("✅ 合格 (DE <= 0.8)")
                 else: 
                     st.error("❌ 不合格 (DE > 0.8)")
+                st.write(f"追加風險機率 (Y): `{add_on_risk:.1%}`")
+                if add_on_risk >= 0.5:
+                    st.warning("⚠️ 判定可能需要追加 (Y)：代表此筆染色可能有狀況，需重新出缸並調整染料配方。")
+                else:
+                    st.success("✅ 判定不需追加 (N)：代表此筆染色預估為正常。")
     else:
         st.warning("請先完成模型訓練。")
