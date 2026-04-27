@@ -88,25 +88,34 @@ def render_prediction(tab_val):
                 st.write("### 📊 預測結果")
                 st.write("### 🧪 資料信心分析 (預測前)")
                 if confidence_result is not None:
-                    st.metric('資料信心指數', f"{confidence_result['score']:.1f}/100", confidence_result['level'])
-                    c_conf1, c_conf2, c_conf3 = st.columns(3)
-                    c_conf1.metric('類別匹配', f"{confidence_result['category']['score'] * 100:.1f}%")
-                    c_conf2.metric('數值範圍匹配', f"{confidence_result['numeric']['score'] * 100:.1f}%")
-                    c_conf3.metric('染劑組合匹配', f"{confidence_result['combo']['score'] * 100:.1f}%")
+                    st.metric('訓練資料覆蓋指數', f"{confidence_result['score']:.1f}/100", confidence_result['level'])
+                    st.metric('預估預測正確率(參考)', f"{confidence_result['estimated_correctness']:.1f}%")
+                    c_conf1, c_conf2, c_conf3, c_conf4 = st.columns(4)
+                    c_conf1.metric('類別組合支持度', f"{confidence_result['category']['score'] * 100:.1f}%")
+                    c_conf2.metric('數值範圍支持度', f"{confidence_result['numeric']['score'] * 100:.1f}%")
+                    c_conf3.metric('染劑組合支持度', f"{confidence_result['combo']['score'] * 100:.1f}%")
+                    c_conf4.metric('Lab鄰域支持度', f"{confidence_result['lab_region']['score'] * 100:.1f}%")
+
+                    c_cnt1, c_cnt2, c_cnt3 = st.columns(3)
+                    c_cnt1.metric('此染劑組合在訓練資料出現次數', confidence_result['combo']['出現次數'])
+                    c_cnt2.metric('此類別三欄位組合出現次數', confidence_result['category']['三欄位組合出現次數'])
+                    c_cnt3.metric('Lab ±3 鄰域樣本數', confidence_result['lab_region']['count_within_3_0'])
 
                     if confidence_result['score'] < 60:
-                        st.warning('⚠️ 輸入資料與訓練資料分布差異較大，建議先檢查後再採信預測結果。')
+                        st.warning('⚠️ 輸入資料在訓練資料中支持度偏低，預測風險高，建議先補資料或人工覆核。')
 
                     with st.expander('查看資料比對細節'):
-                        st.write('**類別欄位是否出現在訓練資料**')
+                        st.write('**類別欄位/組合在訓練資料的支持程度**')
                         st.json(confidence_result['category'])
                         st.write('**數值欄位範圍比對**')
                         st.dataframe(pd.DataFrame(confidence_result['numeric']['details']))
                         st.write('**染劑組合比對**')
                         st.json(confidence_result['combo'])
+                        st.write('**Lab 鄰域比對 (標準樣 L*a*b*)**')
+                        st.json(confidence_result['lab_region'])
                 else:
-                    st.metric('資料信心指數', 'N/A')
-                    st.warning('⚠️ 目前缺少訓練資料參考分布，無法計算信心指數。請先上傳訓練資料並重新訓練/載入模型。')
+                    st.metric('訓練資料覆蓋指數', 'N/A')
+                    st.warning('⚠️ 目前缺少訓練資料參考分布，無法計算支持度。請先上傳訓練資料並重新訓練/載入模型。')
 
                 st.metric("預測 L*", f"{p_L:.2f}")
                 st.metric("預測 a*", f"{p_a:.2f}")

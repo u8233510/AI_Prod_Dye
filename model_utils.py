@@ -80,17 +80,47 @@ def build_data_reference(df_raw, dye_cols, known_dyes):
             'std': float(series.std(ddof=0) if series.std(ddof=0) > 1e-8 else 1.0),
         }
 
-    combo_set = set()
+    combo_keys = []
     for _, row in df_ref[dye_cols].iterrows():
         combo = sorted([clean_dye_id(row[c]) for c in dye_cols if clean_dye_id(row[c]) != '無'])
-        combo_set.add('+'.join(combo) if combo else '僅基礎藥劑(無染料)')
+        combo_keys.append('+'.join(combo) if combo else '僅基礎藥劑(無染料)')
+
+    combo_freq = pd.Series(combo_keys).value_counts().to_dict()
+    cat_triplet_keys = (
+        df_ref['OP否'].astype(str).str.strip()
+        + '|'
+        + df_ref['色系名稱'].astype(str).str.strip()
+        + '|'
+        + df_ref['色系編號'].astype(str).str.strip()
+    )
+    cat_triplet_freq = cat_triplet_keys.value_counts().to_dict()
+
+    lab_array = df_ref[['標準樣L', '標準樣a', '標準樣b']].apply(pd.to_numeric, errors='coerce').dropna().values
+    lab_bin_size = {'L': 2.0, 'a': 2.0, 'b': 2.0}
+    lab_bins = (
+        (
+            (df_ref['標準樣L'] / lab_bin_size['L']).round().astype(int).astype(str)
+            + '|'
+            + (df_ref['標準樣a'] / lab_bin_size['a']).round().astype(int).astype(str)
+            + '|'
+            + (df_ref['標準樣b'] / lab_bin_size['b']).round().astype(int).astype(str)
+        )
+        .value_counts()
+        .to_dict()
+    )
 
     return {
+        'total_rows': int(len(df_ref)),
         'numeric_stats': numeric_stats,
         'seen_OP否': sorted(df_ref['OP否'].astype(str).unique().tolist()),
         'seen_色系名稱': sorted(df_ref['色系名稱'].astype(str).unique().tolist()),
         'seen_色系編號': sorted(df_ref['色系編號'].astype(str).unique().tolist()),
-        'seen_combos': sorted(combo_set),
+        'seen_combos': sorted(combo_freq.keys()),
+        'combo_freq': combo_freq,
+        'cat_triplet_freq': cat_triplet_freq,
+        'lab_points': lab_array.tolist(),
+        'lab_bin_size': lab_bin_size,
+        'lab_bins': lab_bins,
     }
 
 
@@ -99,10 +129,19 @@ def assess_input_data_confidence(df_input, dye_cols, known_dyes, data_reference)
     row_raw = df_input.iloc[0]
     row_feat = X_input.iloc[0]
 
-    op_seen = str(row_raw['OP否']) in set(data_reference.get('seen_OP否', []))
-    name_seen = str(row_raw['色系名稱']) in set(data_reference.get('seen_色系名稱', []))
-    id_seen = str(row_raw['色系編號']) in set(data_reference.get('seen_色系編號', []))
-    cat_score = np.mean([op_seen, name_seen, id_seen])
+    total_rows = max(int(data_reference.get('total_rows', 0)), 1)
+
+    op_val = str(row_raw['OP否']).strip()
+    name_val = str(row_raw['色系名稱']).strip()
+    id_val = str(row_raw['色系編號']).strip()
+    op_seen = op_val in set(data_reference.get('seen_OP否', []))
+    name_seen = name_val in set(data_reference.get('seen_色系名稱', []))
+    id_seen = id_val in set(data_reference.get('seen_色系編號', []))
+
+    cat_triplet_key = f'{op_val}|{name_val}|{id_val}'
+    cat_triplet_count = int(data_reference.get('cat_triplet_freq', {}).get(cat_triplet_key, 0))
+    cat_triplet_ratio = cat_triplet_count / total_rows
+    cat_score = float(min(1.0, np.log1p(cat_triplet_count) / np.log1p(20)))
 
     num_scores = []
     num_details = []
@@ -120,10 +159,35 @@ def assess_input_data_confidence(df_input, dye_cols, known_dyes, data_reference)
 
     input_combo = sorted([clean_dye_id(row_raw[c]) for c in dye_cols if clean_dye_id(row_raw[c]) != '無'])
     input_combo_key = '+'.join(input_combo) if input_combo else '僅基礎藥劑(無染料)'
-    combo_seen = input_combo_key in set(data_reference.get('seen_combos', []))
-    combo_score = 1.0 if combo_seen else 0.35
+    combo_count = int(data_reference.get('combo_freq', {}).get(input_combo_key, 0))
+    combo_seen = combo_count > 0
+    combo_ratio = combo_count / total_rows
+    combo_score = float(min(1.0, np.log1p(combo_count) / np.log1p(20)))
 
-    total_score = 100 * (0.4 * cat_score + 0.35 * num_score + 0.25 * combo_score)
+    lab_input = np.array([float(row_feat['標準樣L']), float(row_feat['標準樣a']), float(row_feat['標準樣b'])], dtype=float)
+    lab_points = np.array(data_reference.get('lab_points', []), dtype=float)
+    if lab_points.size > 0:
+        distances = np.linalg.norm(lab_points - lab_input, axis=1)
+        nearest_lab_distance = float(distances.min())
+        cnt_r15 = int((distances <= 1.5).sum())
+        cnt_r30 = int((distances <= 3.0).sum())
+        cnt_r50 = int((distances <= 5.0).sum())
+    else:
+        nearest_lab_distance = float('inf')
+        cnt_r15 = cnt_r30 = cnt_r50 = 0
+
+    lab_bin_size = data_reference.get('lab_bin_size', {'L': 2.0, 'a': 2.0, 'b': 2.0})
+    lab_bin_key = (
+        f"{int(round(lab_input[0] / max(float(lab_bin_size.get('L', 2.0)), 1e-8)))}|"
+        f"{int(round(lab_input[1] / max(float(lab_bin_size.get('a', 2.0)), 1e-8)))}|"
+        f"{int(round(lab_input[2] / max(float(lab_bin_size.get('b', 2.0)), 1e-8)))}"
+    )
+    lab_bin_count = int(data_reference.get('lab_bins', {}).get(lab_bin_key, 0))
+    lab_score = float(min(1.0, np.log1p(max(cnt_r30, lab_bin_count)) / np.log1p(25)))
+
+    support_index = 100 * (0.25 * cat_score + 0.25 * num_score + 0.30 * combo_score + 0.20 * lab_score)
+    estimated_correctness = float(min(95.0, max(15.0, 10 + 0.85 * support_index)))
+    total_score = support_index
     if total_score >= 80:
         level = '高'
     elif total_score >= 60:
@@ -134,11 +198,14 @@ def assess_input_data_confidence(df_input, dye_cols, known_dyes, data_reference)
     return {
         'score': float(total_score),
         'level': level,
+        'estimated_correctness': estimated_correctness,
         'category': {
             'score': float(cat_score),
             'OP否是否出現在訓練資料': op_seen,
             '色系名稱是否出現在訓練資料': name_seen,
             '色系編號是否出現在訓練資料': id_seen,
+            '三欄位組合出現次數': cat_triplet_count,
+            '三欄位組合出現比例': float(cat_triplet_ratio),
         },
         'numeric': {
             'score': num_score,
@@ -148,5 +215,16 @@ def assess_input_data_confidence(df_input, dye_cols, known_dyes, data_reference)
             'score': combo_score,
             'input_combo': input_combo_key,
             'seen_in_training': combo_seen,
+            '出現次數': combo_count,
+            '出現比例': float(combo_ratio),
+        },
+        'lab_region': {
+            'score': lab_score,
+            'nearest_distance': nearest_lab_distance,
+            'count_within_1_5': cnt_r15,
+            'count_within_3_0': cnt_r30,
+            'count_within_5_0': cnt_r50,
+            'bin_count': lab_bin_count,
+            'bin_key': lab_bin_key,
         },
     }
