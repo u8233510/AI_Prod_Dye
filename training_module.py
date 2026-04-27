@@ -77,6 +77,32 @@ def _build_automl_pipeline(pre):
     )
 
 
+def _build_de_model(pre, model_type, model_params):
+    if model_type == 'automl_lite':
+        de_reg = ExtraTreesRegressor(
+            n_estimators=int(model_params.get('de_n_estimators', 500)),
+            max_depth=None,
+            random_state=42,
+        )
+    else:
+        de_reg = ExplicitWeightedVotingRegressor(
+            [
+                (
+                    'hgb',
+                    HistGradientBoostingRegressor(
+                        loss='absolute_error',
+                        max_iter=int(model_params['hgb_max_iter']),
+                        learning_rate=float(model_params['hgb_learning_rate']),
+                        random_state=42,
+                    ),
+                ),
+                ('et', ExtraTreesRegressor(n_estimators=int(model_params['et_n_estimators']), random_state=42)),
+                ('rf', RandomForestRegressor(n_estimators=int(model_params['rf_n_estimators']), random_state=42)),
+            ]
+        )
+    return Pipeline([('pre', pre), ('reg', de_reg)])
+
+
 def _fit_automl_lite(model, X_train, Y_train, sample_weights, model_params):
     search_space = [
         {
@@ -145,7 +171,11 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
         model = _build_current_model(pre, model_params)
         model.fit(X_train, Y_train, reg__sample_weight=sample_weights)
 
+    de_model = _build_de_model(pre, model_type, model_params)
+    de_model.fit(X_train, actual_de_train, reg__sample_weight=sample_weights)
+
     preds = model.predict(X_test)
+    de_preds_direct = de_model.predict(X_test)
 
     df_val_raw = df_train.loc[X_test.index].copy()
     df_fb = df_val_raw[
@@ -157,16 +187,20 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
     df_fb['預測L'] = df_fb['stdL'] + df_fb['預測DL']
     df_fb['預測a'] = df_fb['stda'] + df_fb['預測Da']
     df_fb['預測b'] = df_fb['stdb'] + df_fb['預測Db']
-    df_fb['預測DE'] = [
+    df_fb['預測DE_向量推導'] = [
         deltaE_CMC(
             (df_fb.loc[i, 'stdL'], df_fb.loc[i, 'stda'], df_fb.loc[i, 'stdb']),
             (df_fb.loc[i, '預測L'], df_fb.loc[i, '預測a'], df_fb.loc[i, '預測b']),
         )
         for i in range(len(df_fb))
     ]
+    de_blend_weight = float(model_params.get('de_blend_weight', 0.7))
+    df_fb['預測DE_直接模型'] = de_preds_direct
+    df_fb['預測DE'] = de_blend_weight * df_fb['預測DE_直接模型'] + (1.0 - de_blend_weight) * df_fb['預測DE_向量推導']
 
     return {
         'model': model,
+        'de_model': de_model,
         'kd': known_dyes,
         'fb': df_fb,
         'dc': dye_cols,
@@ -182,6 +216,7 @@ def train_model(df_raw, dye_cols, model_type='current_ensemble', model_params=No
 def save_trained_artifact(state, save_path=MODEL_ARTIFACT_PATH):
     artifact = {
         'model': state['model'],
+        'de_model': state.get('de_model'),
         'kd': state['kd'],
         'dc': state['dc'],
         'data_reference': state.get('data_reference', {}),
@@ -211,6 +246,7 @@ def _render_model_params(container, model_type):
 
     params['high_de_threshold'] = container.number_input('高誤差閾值 (CMC_DE)', min_value=0.0, max_value=10.0, value=0.8, step=0.1)
     params['high_de_weight'] = container.number_input('高誤差樣本權重', min_value=1.0, max_value=20.0, value=5.0, step=0.5)
+    params['de_blend_weight'] = container.slider('DE直接模型權重', min_value=0.0, max_value=1.0, value=0.7, step=0.05)
 
     if model_type == 'current_ensemble':
         container.caption('目前模型：Voting Ensemble')
@@ -223,6 +259,7 @@ def _render_model_params(container, model_type):
         params['n_iter'] = container.slider('搜尋次數 (n_iter)', min_value=5, max_value=60, value=20, step=5)
         params['cv_folds'] = container.selectbox('交叉驗證折數', [3, 4, 5], index=0)
         params['scoring'] = container.selectbox('評分指標', ['neg_mean_absolute_error', 'neg_root_mean_squared_error'], index=0)
+        params['de_n_estimators'] = container.slider('DE模型樹數', min_value=200, max_value=1200, value=500, step=100)
 
     return params
 
@@ -260,6 +297,7 @@ def render_training_button(df_raw=None, dye_cols=None):
             st.sidebar.warning('尚未找到已儲存模型，請先完成一次訓練。')
         else:
             st.session_state['model'] = artifact['model']
+            st.session_state['de_model'] = artifact.get('de_model')
             st.session_state['kd'] = artifact['kd']
             st.session_state['dc'] = artifact['dc']
             data_reference = artifact.get('data_reference', {})
